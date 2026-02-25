@@ -1,19 +1,30 @@
-import random
 from fastapi import FastAPI
-from app.models import TransactionRequest, TransactionResponse, TransactionStatus
+from app.models import (
+    TransactionRequest,
+    TransactionResponse,
+    TransactionStatus,
+    HealthResponse,
+    ProcessorHealthResponse,
+)
 from app.processors import PROCESSORS
+from app.health import HealthRegistry, HEALTH_THRESHOLD
+from app.router import SmartRouter
 
 app = FastAPI(
     title="Zephyr Smart Routing Engine",
     description="Health-aware payment routing with automatic failover",
-    version="0.1.0",
+    version="0.2.0",
 )
+
+health_registry = HealthRegistry(list(PROCESSORS.keys()))
+smart_router = SmartRouter(PROCESSORS, health_registry)
 
 
 @app.post("/transactions", response_model=TransactionResponse)
 def create_transaction(request: TransactionRequest):
-    processor = random.choice(list(PROCESSORS.values()))
+    processor = smart_router.select()
     status = processor.process(request)
+    health_registry.record(processor.id, status)
 
     message = (
         "Transaction approved"
@@ -29,4 +40,30 @@ def create_transaction(request: TransactionRequest):
         processor_name=processor.name,
         fee_percent=processor.fee_percent,
         message=message,
+    )
+
+
+@app.get("/health", response_model=HealthResponse)
+def get_health():
+    trackers = health_registry.get_all_trackers()
+    processors = []
+
+    for pid, tracker in trackers.items():
+        proc = PROCESSORS[pid]
+        processors.append(
+            ProcessorHealthResponse(
+                processor_id=proc.id,
+                processor_name=proc.name,
+                success_rate=round(tracker.success_rate, 4),
+                status=tracker.status.value,
+                total_attempts=tracker.total_attempts,
+                total_successes=tracker.total_successes,
+                fee_percent=proc.fee_percent,
+                is_routing_enabled=tracker.success_rate >= HEALTH_THRESHOLD,
+            )
+        )
+
+    return HealthResponse(
+        processors=processors,
+        health_threshold=HEALTH_THRESHOLD,
     )

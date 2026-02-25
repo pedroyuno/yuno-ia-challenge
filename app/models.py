@@ -30,3 +30,19 @@ class TransactionResponse(BaseModel):
     processor_name: str
     fee_percent: float
     message: str
+
+
+class ProcessorHealthResponse(BaseModel):
+    processor_id: str
+    processor_name: str
+    success_rate: float
+    status: str
+    total_attempts: int
+    total_successes: int
+    fee_percent: float
+    is_routing_enabled: bool
+
+
+class HealthResponse(BaseModel):
+    processors: list[ProcessorHealthResponse]
+    health_threshold: float
