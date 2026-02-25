@@ -27,13 +27,26 @@ class TestCostAwareRouting:
         health = HealthRegistry(list(procs.keys()), window_size=10)
         router = SmartRouter(procs, health)
 
-        # Make "cheap" unhealthy
         for _ in range(10):
             health.record("cheap", TransactionStatus.DECLINED)
 
-        # Should skip probe (tx_count=1, not multiple of 10)
         selected = router.select()
         assert selected.id == "mid"
+
+    def test_routes_to_degraded_processor_if_cheapest(self):
+        """DEGRADED processors (60-80% rate) are still eligible for routing."""
+        procs = make_processors()
+        health = HealthRegistry(list(procs.keys()), window_size=10)
+        router = SmartRouter(procs, health)
+
+        # Make "cheap" degraded (70% success rate)
+        for _ in range(7):
+            health.record("cheap", TransactionStatus.APPROVED)
+        for _ in range(3):
+            health.record("cheap", TransactionStatus.DECLINED)
+
+        selected = router.select()
+        assert selected.id == "cheap"
 
 
 class TestCircuitBreaker:
@@ -43,12 +56,10 @@ class TestCircuitBreaker:
         health = HealthRegistry(list(procs.keys()), window_size=10)
         router = SmartRouter(procs, health)
 
-        # Make "cheap" and "mid" unhealthy
         for _ in range(10):
             health.record("cheap", TransactionStatus.DECLINED)
             health.record("mid", TransactionStatus.DECLINED)
 
-        # Only "expensive" is healthy -- should be selected (not a probe tx)
         selected = router.select()
         assert selected.id == "expensive"
 
@@ -57,7 +68,6 @@ class TestCircuitBreaker:
         health = HealthRegistry(list(procs.keys()), window_size=10)
         router = SmartRouter(procs, health)
 
-        # Make all unhealthy, but "mid" with highest rate
         for _ in range(10):
             health.record("cheap", TransactionStatus.DECLINED)
             health.record("expensive", TransactionStatus.DECLINED)
@@ -66,7 +76,6 @@ class TestCircuitBreaker:
         for _ in range(6):
             health.record("mid", TransactionStatus.DECLINED)
 
-        # All unhealthy: "mid" has 40% (highest), should be fallback
         selected = router.select()
         assert selected.id == "mid"
 
@@ -78,16 +87,13 @@ class TestProbeMechanism:
         health = HealthRegistry(list(procs.keys()), window_size=10)
         router = SmartRouter(procs, health)
 
-        # Make "cheap" unhealthy
         for _ in range(10):
             health.record("cheap", TransactionStatus.DECLINED)
 
-        # Send 9 transactions (tx_count 1..9) -- none should probe
         for _ in range(9):
             selected = router.select()
             assert selected.id != "cheap"
 
-        # 10th transaction should probe the unhealthy processor
         selected = router.select()
         assert selected.id == "cheap"
 
@@ -99,18 +105,15 @@ class TestAutoRecovery:
         health = HealthRegistry(list(procs.keys()), window_size=10)
         router = SmartRouter(procs, health)
 
-        # Make "cheap" unhealthy
         for _ in range(10):
             health.record("cheap", TransactionStatus.DECLINED)
 
         selected = router.select()
         assert selected.id != "cheap"
 
-        # Simulate recovery: 7 successes push out 7 old failures
-        # Window becomes: 3 DECLINED + 7 APPROVED = 70% > 60%
+        # 7 successes push out 7 old failures -> 70% -> DEGRADED -> still eligible
         for _ in range(7):
             health.record("cheap", TransactionStatus.APPROVED)
 
-        # "cheap" is healthy again and cheapest -- should be selected
         selected = router.select()
         assert selected.id == "cheap"

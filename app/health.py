@@ -1,52 +1,65 @@
+import threading
 from collections import deque
 from enum import Enum
-from app.models import TransactionStatus
 
-HEALTH_THRESHOLD = 0.60
-WINDOW_SIZE = 100
+from app.config import settings
+from app.models import TransactionStatus
 
 
 class ProcessorStatus(str, Enum):
     HEALTHY = "healthy"
+    DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
 
 
 class ProcessorHealthTracker:
-    """Tracks success/failure over a sliding window of the last N transactions."""
+    """Tracks success/failure over a sliding window of the last N transactions.
 
-    def __init__(self, processor_id: str, window_size: int = WINDOW_SIZE):
+    Thread-safe: all reads and writes to the window are protected by a lock
+    so concurrent requests don't corrupt the deque or produce torn reads.
+    """
+
+    def __init__(self, processor_id: str, window_size: int = settings.window_size):
         self.processor_id = processor_id
         self.window_size = window_size
         self._results: deque[bool] = deque(maxlen=window_size)
+        self._lock = threading.Lock()
 
     def record(self, status: TransactionStatus):
-        self._results.append(status == TransactionStatus.APPROVED)
+        with self._lock:
+            self._results.append(status == TransactionStatus.APPROVED)
 
     @property
     def total_attempts(self) -> int:
-        return len(self._results)
+        with self._lock:
+            return len(self._results)
 
     @property
     def total_successes(self) -> int:
-        return sum(self._results)
+        with self._lock:
+            return sum(self._results)
 
     @property
     def success_rate(self) -> float:
-        if not self._results:
-            return 1.0  # assume healthy until proven otherwise
-        return self.total_successes / self.total_attempts
+        with self._lock:
+            if not self._results:
+                return 1.0
+            return sum(self._results) / len(self._results)
 
     @property
     def status(self) -> ProcessorStatus:
-        if self.success_rate >= HEALTH_THRESHOLD:
+        rate = self.success_rate
+        if rate >= settings.degraded_threshold:
             return ProcessorStatus.HEALTHY
+        if rate >= settings.health_threshold:
+            return ProcessorStatus.DEGRADED
         return ProcessorStatus.UNHEALTHY
 
 
 class HealthRegistry:
     """Central registry of health trackers for all processors."""
 
-    def __init__(self, processor_ids: list[str], window_size: int = WINDOW_SIZE):
+    def __init__(self, processor_ids: list[str], window_size: int = settings.window_size):
         self._trackers = {
             pid: ProcessorHealthTracker(pid, window_size)
             for pid in processor_ids
@@ -63,4 +76,5 @@ class HealthRegistry:
 
     def reset(self):
         for tracker in self._trackers.values():
-            tracker._results.clear()
+            with tracker._lock:
+                tracker._results.clear()

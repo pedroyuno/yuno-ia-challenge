@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field
+import uuid
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
-import uuid
+
+from pydantic import BaseModel, Field
 
 
 class Currency(str, Enum):
@@ -19,10 +21,20 @@ class TransactionRequest(BaseModel):
     amount: float = Field(..., gt=0, description="Transaction amount")
     currency: Currency = Field(..., description="ISO currency code")
     description: Optional[str] = None
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        description="Client-supplied key to prevent duplicate processing. "
+        "If the same key is sent twice, the original response is returned.",
+    )
+    request_id: Optional[str] = Field(
+        default=None,
+        description="Client-supplied trace ID propagated through the response for observability.",
+    )
 
 
 class TransactionResponse(BaseModel):
     transaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     amount: float
     currency: Currency
     status: TransactionStatus
@@ -30,6 +42,7 @@ class TransactionResponse(BaseModel):
     processor_name: str
     fee_percent: float
     message: str
+    request_id: Optional[str] = None
 
 
 class ProcessorHealthResponse(BaseModel):

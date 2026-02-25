@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zephyr — Processor Health</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      max-width: 960px;
+      margin: 0 auto 2rem;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: .5rem;
+    }
+    header h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -.02em; }
+    header h1 span { color: #6e7681; font-weight: 400; }
+    .meta { font-size: .8rem; color: #6e7681; display: flex; gap: 1.2rem; align-items: center; }
+    .meta .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+    .meta .dot.live { background: #3fb950; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+    .grid {
+      max-width: 960px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 1.5rem;
+      transition: border-color .2s;
+    }
+    .card:hover { border-color: #484f58; }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+    .card-header h2 { font-size: 1rem; font-weight: 600; }
+    .card-header .id { font-size: .75rem; color: #6e7681; }
+
+    .badge {
+      font-size: .7rem;
+      font-weight: 600;
+      padding: .2rem .6rem;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .badge.healthy   { background: #0d3220; color: #3fb950; }
+    .badge.degraded  { background: #3b2e00; color: #d29922; }
+    .badge.unhealthy { background: #3d1214; color: #f85149; }
+
+    .rate-ring {
+      width: 100px;
+      height: 100px;
+      margin: 0 auto 1.25rem;
+      position: relative;
+    }
+    .rate-ring svg { transform: rotate(-90deg); }
+    .rate-ring .bg  { stroke: #21262d; }
+    .rate-ring .fg  { transition: stroke-dashoffset .6s ease, stroke .3s; stroke-linecap: round; }
+    .rate-ring .label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .6rem .8rem;
+      font-size: .8rem;
+    }
+    .stats dt { color: #6e7681; }
+    .stats dd { font-weight: 600; text-align: right; }
+
+    .routing-bar {
+      margin-top: 1rem;
+      padding-top: .8rem;
+      border-top: 1px solid #21262d;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .8rem;
+    }
+    .routing-bar .indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .routing-bar .indicator.on  { background: #3fb950; }
+    .routing-bar .indicator.off { background: #f85149; }
+
+    .footer-info {
+      max-width: 960px;
+      margin: 2rem auto 0;
+      text-align: center;
+      font-size: .75rem;
+      color: #484f58;
+    }
+
+    .error-banner {
+      max-width: 960px;
+      margin: 0 auto 1rem;
+      background: #3d1214;
+      border: 1px solid #f8514950;
+      color: #f85149;
+      padding: .75rem 1rem;
+      border-radius: 8px;
+      font-size: .85rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Zephyr <span>/ Processor Health</span></h1>
+    <div class="meta">
+      <span>Threshold: <strong id="threshold">—</strong></span>
+      <span><span class="dot live"></span> Auto-refresh 2 s</span>
+      <span id="updated"></span>
+    </div>
+  </header>
+
+  <div class="error-banner" id="error"></div>
+  <div class="grid" id="grid"></div>
+  <div class="footer-info">Zephyr Smart Routing Engine &middot; Health Dashboard</div>
+
+  <script>
+    const CIRCUMFERENCE = 2 * Math.PI * 42;
+    const POLL_MS = 2000;
+
+    function rateColor(rate) {
+      if (rate >= 0.8) return '#3fb950';
+      if (rate >= 0.6) return '#d29922';
+      return '#f85149';
+    }
+
+    function renderCard(p) {
+      const pct = (p.success_rate * 100).toFixed(1);
+      const offset = CIRCUMFERENCE * (1 - p.success_rate);
+      const color = rateColor(p.success_rate);
+      const failed = p.total_attempts - p.total_successes;
+
+      return `
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2>${p.processor_name}</h2>
+              <div class="id">${p.processor_id}</div>
+            </div>
+            <span class="badge ${p.status}">${p.status}</span>
+          </div>
+
+          <div class="rate-ring">
+            <svg width="100" height="100" viewBox="0 0 100 100">
+              <circle class="bg" cx="50" cy="50" r="42" fill="none" stroke-width="7"/>
+              <circle class="fg" cx="50" cy="50" r="42" fill="none" stroke-width="7"
+                stroke="${color}"
+                stroke-dasharray="${CIRCUMFERENCE}"
+                stroke-dashoffset="${offset}"/>
+            </svg>
+            <div class="label" style="color:${color}">${pct}%</div>
+          </div>
+
+          <dl class="stats">
+            <dt>Attempts</dt>   <dd>${p.total_attempts}</dd>
+            <dt>Successes</dt>  <dd>${p.total_successes}</dd>
+            <dt>Failures</dt>   <dd>${failed}</dd>
+            <dt>Fee</dt>        <dd>${p.fee_percent}%</dd>
+          </dl>
+
+          <div class="routing-bar">
+            <span class="indicator ${p.is_routing_enabled ? 'on' : 'off'}"></span>
+            ${p.is_routing_enabled ? 'Receiving traffic' : 'Excluded from routing'}
+          </div>
+        </div>`;
+    }
+
+    async function poll() {
+      const errEl = document.getElementById('error');
+      try {
+        const res = await fetch('/health');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        document.getElementById('threshold').textContent =
+          (data.health_threshold * 100).toFixed(0) + '%';
+        document.getElementById('grid').innerHTML =
+          data.processors.map(renderCard).join('');
+        document.getElementById('updated').textContent =
+          'Updated ' + new Date().toLocaleTimeString();
+
+        errEl.style.display = 'none';
+      } catch (e) {
+        errEl.textContent = `Could not reach /health — ${e.message}`;
+        errEl.style.display = 'block';
+      }
+    }
+
+    poll();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>

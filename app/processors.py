@@ -3,12 +3,22 @@ from dataclasses import dataclass, field
 from app.models import TransactionRequest, TransactionStatus
 
 
+class ProcessorError(Exception):
+    """Raised when a processor fails to handle a transaction (timeout, network error, etc.)."""
+
+    def __init__(self, processor_id: str, reason: str = "processor unavailable"):
+        self.processor_id = processor_id
+        self.reason = reason
+        super().__init__(f"{processor_id}: {reason}")
+
+
 @dataclass
 class MockProcessor:
     id: str
     name: str
     base_success_rate: float
     fee_percent: float
+    error_rate: float = 0.0
     _current_success_rate: float = field(init=False)
 
     def __post_init__(self):
@@ -23,6 +33,9 @@ class MockProcessor:
         self._current_success_rate = max(0.0, min(1.0, value))
 
     def process(self, request: TransactionRequest) -> TransactionStatus:
+        if random.random() < self.error_rate:
+            raise ProcessorError(self.id, "connection timeout")
+
         if random.random() < self._current_success_rate:
             return TransactionStatus.APPROVED
         return TransactionStatus.DECLINED
