@@ -124,9 +124,9 @@ curl -s http://localhost:8000/health | python -m json.tool
 
 ---
 
-## DELIVERY 3 -- Outage Simulation + Demo Script
+## DELIVERY 3 -- Outage Simulation, Demo Script, and Unit Tests
 
-**Goal**: Add simulation controls and a script that demonstrates full failover lifecycle.
+**Goal**: Add simulation controls, a demo script for the full failover lifecycle, and unit tests for deterministic validation of routing logic.
 
 **Files created/modified**:
 - `app/main.py` -- Added `POST /simulate/outage/{processor_id}` (drops success rate to 10%) and `POST /simulate/recover/{processor_id}` (restores original rate). Also added `POST /simulate/reset` to clear all health data.
@@ -137,9 +137,23 @@ curl -s http://localhost:8000/health | python -m json.tool
   4. Recovers processor_a
   5. Sends 80 more transactions (traffic returns)
   6. Prints per-phase summary with processor distribution
+- `tests/test_health.py` -- Unit tests for the health tracker:
+  - Success rate calculation with known inputs
+  - Status transitions (healthy -> unhealthy -> healthy)
+  - Sliding window eviction (old results drop off)
+  - Registry reset
+- `tests/test_router.py` -- Unit tests for the smart router:
+  - Cost-aware selection (cheapest healthy processor picked)
+  - Circuit breaker exclusion (unhealthy processors skipped)
+  - Probe mechanism (unhealthy processors get probed every Nth transaction)
+  - Fallback behavior (all unhealthy -> pick best success rate)
+  - Auto-recovery (processor crosses back above threshold)
 
 **How to manually test**:
 ```bash
+# Run unit tests:
+python -m pytest tests/ -v
+
 # Start server, then run scenario:
 python test_scenario.py
 
@@ -149,7 +163,7 @@ curl -X POST http://localhost:8000/simulate/outage/processor_a
 curl -X POST http://localhost:8000/simulate/recover/processor_a
 ```
 
-**Expected result**: Script prints clear output showing traffic shifting away from the failing processor and back after recovery.
+**Expected result**: All unit tests pass. Demo script prints clear output showing traffic shifting away from the failing processor and back after recovery.
 
 ---
 

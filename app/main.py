@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from app.models import (
     TransactionRequest,
     TransactionResponse,
@@ -13,7 +13,7 @@ from app.router import SmartRouter
 app = FastAPI(
     title="Zephyr Smart Routing Engine",
     description="Health-aware payment routing with automatic failover",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 health_registry = HealthRegistry(list(PROCESSORS.keys()))
@@ -67,3 +67,41 @@ def get_health():
         processors=processors,
         health_threshold=HEALTH_THRESHOLD,
     )
+
+
+# --- Simulation endpoints ---
+
+
+@app.post("/simulate/outage/{processor_id}")
+def simulate_outage(processor_id: str):
+    if processor_id not in PROCESSORS:
+        raise HTTPException(status_code=404, detail=f"Processor '{processor_id}' not found")
+    processor = PROCESSORS[processor_id]
+    processor.success_rate = 0.10
+    return {
+        "message": f"Outage simulated for {processor.name}",
+        "processor_id": processor_id,
+        "success_rate": processor.success_rate,
+    }
+
+
+@app.post("/simulate/recover/{processor_id}")
+def simulate_recover(processor_id: str):
+    if processor_id not in PROCESSORS:
+        raise HTTPException(status_code=404, detail=f"Processor '{processor_id}' not found")
+    processor = PROCESSORS[processor_id]
+    processor.success_rate = processor.base_success_rate
+    return {
+        "message": f"Processor {processor.name} recovered",
+        "processor_id": processor_id,
+        "success_rate": processor.success_rate,
+    }
+
+
+@app.post("/simulate/reset")
+def simulate_reset():
+    for processor in PROCESSORS.values():
+        processor.success_rate = processor.base_success_rate
+    health_registry.reset()
+    smart_router._tx_count = 0
+    return {"message": "All processors and health data reset"}
